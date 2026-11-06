@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>報價單產生系統</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- html2pdf.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    @media print {
+      body * { visibility: hidden; }
+      #printArea, #printArea * { visibility: visible; }
+      #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col pb-24 md:pb-8">
+
+  <!-- 頂部導航 -->
+  <header class="bg-indigo-600 text-white py-4 shadow-md">
+    <div class="max-w-4xl mx-auto px-4 flex justify-between items-center">
+      <h1 class="text-xl font-bold tracking-wide">報價單建立系統</h1>
+      <span id="dataStatus" class="text-xs bg-indigo-700 px-2.5 py-1 rounded-full text-indigo-100">正在讀取產品資料...</span>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-6 w-full flex-1">
+    <!-- 錯誤提示列 -->
+    <div id="errorAlert" class="hidden mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between">
+      <span id="errorMessage" class="text-sm font-medium">無法讀取 Google 試算表資料，請確認網路連線或權限設定。</span>
+    </div>
+
+    <!-- 客戶資訊區塊 -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">基本資訊</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">客戶名稱 <span class="text-red-500">*</span></label>
+          <input type="text" id="clientName" placeholder="例如：台積電、王小明" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">報價日期</label>
+          <input type="date" id="quoteDate" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+      </div>
+    </section>
+
+    <!-- 品項編輯區塊 -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-base font-semibold text-slate-700">報價品項清單</h2>
+        <span class="text-xs text-slate-400">數量填 0 自動移除品項</span>
+      </div>
+
+      <!-- 品項列表（手機卡片式 / 桌機表格響應） -->
+      <div id="itemsContainer" class="space-y-4">
+        <!-- 動態項目將產生在此 -->
+      </div>
+    </section>
+
+    <!-- 金額摘要 -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <div class="space-y-2 text-right">
+        <div class="flex justify-between text-sm text-slate-600">
+          <span>未稅合計：</span>
+          <span id="subtotalDisplay" class="font-medium">NT$ 0</span>
+        </div>
+        <div class="flex justify-between text-sm text-slate-600">
+          <span>營業稅 (5%)：</span>
+          <span id="taxDisplay" class="font-medium">NT$ 0</span>
+        </div>
+        <div class="flex justify-between text-base font-bold text-indigo-700 pt-2 border-t border-slate-100">
+          <span>總計金額：</span>
+          <span id="totalDisplay">NT$ 0</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 桌機與手機置底懸浮操作列（手機版恆常顯示） -->
+  <footer class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t border-slate-200 p-3 shadow-lg z-30">
+    <div class="max-w-4xl mx-auto flex items-center justify-between gap-3">
+      <button type="button" id="addItemBtn" onclick="addNewItem()" disabled class="flex-1 md:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-lg border border-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        + 新增品項
+      </button>
+      <button type="button" id="generateQuoteBtn" onclick="openQuoteModal()" disabled class="flex-1 md:flex-none px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        產生報價單
+      </button>
+    </div>
+  </footer>
+
+  <!-- 報價單預覽與匯出 Modal -->
+  <div id="quoteModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm overflow-y-auto p-4 flex items-center justify-center">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl my-8 relative flex flex-col max-h-[90vh]">
+      <div class="flex justify-between items-center border-b pb-3 mb-4">
+        <h3 class="text-lg font-bold text-slate-800">報價單預覽</h3>
+        <button onclick="closeQuoteModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
+      </div>
+
+      <!-- 報價單列印／PDF 輸出區域 -->
+      <div id="printArea" class="bg-white p-6 rounded-lg border border-slate-100 overflow-y-auto flex-1 text-slate-800">
+        <div class="border-b-2 border-slate-800 pb-4 mb-6">
+          <div class="flex justify-between items-start">
+            <div>
+              <h2 class="text-2xl font-black text-slate-900 tracking-wide">報價單 (QUOTATION)</h2>
+              <p class="text-xs text-slate-400 mt-1">Generated by Web Quote System</p>
+            </div>
+            <div class="text-right text-xs text-slate-500 space-y-1">
+              <div><strong>日期：</strong><span id="previewDate"></span></div>
+              <div><strong>單號：</strong><span id="previewNo"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-6 grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <span class="text-slate-400 block mb-1">客戶名稱</span>
+            <span id="previewClient" class="text-sm font-semibold text-slate-800"></span>
+          </div>
+        </div>
+
+        <!-- 表格輸出 -->
+        <table class="w-full text-left text-xs mb-6 border-collapse">
+          <thead>
+            <tr class="border-b border-slate-200 text-slate-500">
+              <th class="py-2">編號</th>
+              <th class="py-2">品名</th>
+              <th class="py-2 text-right">單價</th>
+              <th class="py-2 text-right">數量</th>
+              <th class="py-2 text-right">單位</th>
+              <th class="py-2 text-right">小計</th>
+            </tr>
+          </thead>
+          <tbody id="previewItemsBody" class="divide-y divide-slate-100">
+            <!-- 報價預覽品項 -->
+          </tbody>
+        </table>
+
+        <!-- 結算合計 -->
+        <div class="flex justify-end pt-4 border-t border-slate-200 text-xs">
+          <div class="w-48 space-y-2">
+            <div class="flex justify-between text-slate-600">
+              <span>小計 (未稅)：</span>
+              <span id="previewSubtotal">NT$ 0</span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>營業稅 (5%)：</span>
+              <span id="previewTax">NT$ 0</span>
+            </div>
+            <div class="flex justify-between text-sm font-bold text-slate-900 pt-2 border-t border-slate-200">
+              <span>總計：</span>
+              <span id="previewTotal">NT$ 0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 操作按鈕列 -->
+      <div class="mt-6 pt-3 border-t border-slate-100 flex flex-wrap gap-2 justify-end">
+        <button type="button" onclick="downloadPDF()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors">
+          下載 PDF
+        </button>
+        <button type="button" id="shareBtn" onclick="shareQuote()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">
+          分享 (LINE / Email)
+        </button>
+        <button type="button" onclick="closeQuoteModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-medium transition-colors">
+          關閉
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SHEET_ID = '19FiN1yVL8cIK-zIhUirbmlnw0fquNOpiIZSq3erkoGg';
+    let products = [];
+    let items = [];
+    let itemIdCounter = 0;
+
+    // 設定預設日期為當日
+    document.getElementById('quoteDate').value = new Date().toISOString().split('T')[0];
+
+    // ==========================================
+    // 1. JSONP (gviz) 讀取資料
+    // ==========================================
+    function loadProductsJSONP() {
+      const script = document.createElement('script');
+      const callbackName = 'googleDocCallback_' + Math.floor(Math.random() * 100000);
+      
+      // 設定超時偵測
+      const timeoutTimer = setTimeout(() => {
+        handleLoadError('讀取資料超時，請檢查網路連線或確認試算表分享權限。');
+      }, 10000);
+
+      window[callbackName] = function(json) {
+        clearTimeout(timeoutTimer);
+        delete window[callbackName];
+        document.body.removeChild(script);
+
+        try {
+          if (!json || !json.table || !json.table.rows) {
+            throw new Error('試算表格式異常');
+          }
+
+          // 解析欄位：type, pno, pname, unit, price
+          products = json.table.rows.map(row => {
+            const getVal = (index) => {
+              if (!row.c || !row.c[index]) return '';
+              return row.c[index].v !== undefined ? row.c[index].v : '';
+            };
+
+            return {
+              type: String(getVal(0)).trim(),
+              pno: String(getVal(1)).trim(),
+              pname: String(getVal(2)).trim(),
+              unit: String(getVal(3)).trim(),
+              price: Number(getVal(4)) || 0
+            };
+          }).filter(p => p.type && p.pno); // 過濾空白行
+
+          if (products.length === 0) {
+            throw new Error('試算表中無有效產品資料');
+          }
+
+          // 載入成功狀態
+          document.getElementById('dataStatus').innerText = `已載入 ${products.length} 筆產品`;
+          document.getElementById('dataStatus').className = "text-xs bg-emerald-700 px-2.5 py-1 rounded-full text-emerald-100";
+          document.getElementById('addItemBtn').disabled = false;
+          document.getElementById('generateQuoteBtn').disabled = false;
+
+          // 預設建立一筆品項列
+          addNewItem();
+        } catch (err) {
+          handleLoadError(err.message || '解析產品資料時發生錯誤');
+        }
+      };
+
+      script.onerror = function() {
+        clearTimeout(timeoutTimer);
+        handleLoadError('無法載入 Google 試算表腳本，請確認試算表代碼與檢視權限。');
+      };
+
+      // 利用 Google Visualization API JSONP 端點
+      script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=responseHandler:${callbackName}`;
+      document.body.appendChild(script);
+    }
+
+    function handleLoadError(msg) {
+      document.getElementById('dataStatus').innerText = '載入失敗';
+      document.getElementById('dataStatus').className = "text-xs bg-red-700 px-2.5 py-1 rounded-full text-red-100";
+      document.getElementById('errorMessage').innerText = msg;
+      document.getElementById('errorAlert').classList.remove('hidden');
+      document.getElementById('addItemBtn').disabled = true;
+      document.getElementById('generateQuoteBtn').disabled = true;
+    }
+
+    // ==========================================
+    // 2. 表單連動與品項操作
+    // ==========================================
+    function getCategories() {
+      const categories = [...new Set(products.map(p => p.type))];
+      return categories.sort();
+    }
+
+    function addNewItem() {
+      const id = ++itemIdCounter;
+      const categories = getCategories();
+
+      const item = {
+        id: id,
+        type: '',
+        pno: '',
+        pname: '',
+        unit: '',
+        price: 0,
+        qty: 1
+      };
+      items.push(item);
+
+      renderItems();
+      calculateTotals();
+    }
+
+    function removeItem(id) {
+      items = items.filter(item => item.id !== id);
+      renderItems();
+      calculateTotals();
+    }
+
+    function onCategoryChange(id, selectedType) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      item.type = selectedType;
+      item.pno = '';
+      item.pname = '';
+      item.unit = '';
+      item.price = 0;
+
+      renderItems();
+      calculateTotals();
+    }
+
+    function onPnoChange(id, selectedPno) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      const product = products.find(p => p.pno === selectedPno && p.type === item.type);
+      if (product) {
+        item.pno = product.pno;
+        item.pname = product.pname;
+        item.unit = product.unit;
+        item.price = product.price;
+      } else {
+        item.pno = '';
+        item.pname = '';
+        item.unit = '';
+        item.price = 0;
+      }
+
+      renderItems();
+      calculateTotals();
+    }
+
+    function onQtyChange(id, value) {
+      const qty = parseInt(value, 10);
+      if (isNaN(qty) || qty <= 0) {
+        removeItem(id);
+      } else {
+        const item = items.find(i => i.id === id);
+        if (item) {
+          item.qty = qty;
+          calculateTotals();
+        }
+      }
+    }
+
+    function renderItems() {
+      const container = document.getElementById('itemsContainer');
+      if (items.length === 0) {
+        container.innerHTML = `<div class="text-center py-8 text-slate-400 text-sm">目前無任何品項，請點選下方「新增品項」按鈕。</div>`;
+        return;
+      }
+
+      const categories = getCategories();
+
+      container.innerHTML = items.map((item, index) => {
+        const filteredProducts = products.filter(p => p.type === item.type);
+
+        return `
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 transition-all">
+            <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-200">
+              <span class="text-xs font-bold text-slate-500">品項 #${index + 1}</span>
+              <button type="button" onclick="removeItem(${item.id})" class="text-xs text-red-500 hover:text-red-700 font-medium">刪除</button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
+              <!-- 類別 -->
+              <div class="md:col-span-2">
+                <label class="block text-xs text-slate-500 mb-1">類別</label>
+                <select onchange="onCategoryChange(${item.id}, this.value)" class="w-full bg-white px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500">
+                  <option value="">-- 選擇類別 --</option>
+                  ${categories.map(cat => `<option value="${cat}" ${item.type === cat ? 'selected' : ''}>${cat}</option>`).join('')}
+                </select>
+              </div>
+
+              <!-- 編號 -->
+              <div class="md:col-span-2">
+                <label class="block text-xs text-slate-500 mb-1">產品編號</label>
+                <select onchange="onPnoChange(${item.id}, this.value)" ${!item.type ? 'disabled' : ''} class="w-full bg-white px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">-- 選擇編號 --</option>
+                  ${filteredProducts.map(p => `<option value="${p.pno}" ${item.pno === p.pno ? 'selected' : ''}>${p.pno} - ${p.pname}</option>`).join('')}
+                </select>
+              </div>
+
+              <!-- 數量 -->
+              <div class="md:col-span-2">
+                <label class="block text-xs text-slate-500 mb-1">數量 (填 0 刪除)</label>
+                <input type="number" min="0" value="${item.qty}" onchange="onQtyChange(${item.id}, this.value)" oninput="if(this.value==='0') onQtyChange(${item.id}, 0)" class="w-full bg-white px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500">
+              </div>
+            </div>
+
+            <!-- 自動帶上品名、單位、單價資訊 (只讀提示) -->
+            <div class="mt-3 pt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-600 bg-white p-2.5 rounded-lg border border-slate-100">
+              <div><span class="text-slate-400">品名：</span><span class="font-medium text-slate-800">${item.pname || '-'}</span></div>
+              <div><span class="text-slate-400">單位：</span><span>${item.unit || '-'}</span></div>
+              <div><span class="text-slate-400">單價：</span><span>$${item.price.toLocaleString()}</span></div>
+              <div class="text-right font-medium text-indigo-600">小計：$${(item.price * item.qty).toLocaleString()}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function calculateTotals() {
+      const subtotal = items.reduce((acc, curr) => acc + (curr.price * curr.qty), 0);
+      const tax = Math.round(subtotal * 0.05);
+      const total = subtotal + tax;
+
+      document.getElementById('subtotalDisplay').innerText = `NT$ ${subtotal.toLocaleString()}`;
+      document.getElementById('taxDisplay').innerText = `NT$ ${tax.toLocaleString()}`;
+      document.getElementById('totalDisplay').innerText = `NT$ ${total.toLocaleString()}`;
+
+      return { subtotal, tax, total };
+    }
+
+    // ==========================================
+    // 3. 報價單 Modal 與預覽
+    // ==========================================
+    function openQuoteModal() {
+      const client = document.getElementById('clientName').value.trim();
+      if (!client) {
+        alert('請先填寫客戶名稱');
+        document.getElementById('clientName').focus();
+        return;
+      }
+
+      const validItems = items.filter(i => i.pno && i.qty > 0);
+      if (validItems.length === 0) {
+        alert('請至少加入一項有效的產品品項');
+        return;
+      }
+
+      const dateStr = document.getElementById('quoteDate').value;
+      const { subtotal, tax, total } = calculateTotals();
+
+      document.getElementById('previewClient').innerText = client;
+      document.getElementById('previewDate').innerText = dateStr;
+      document.getElementById('previewNo').innerText = 'Q-' + Date.now().toString().slice(-6);
+
+      const tbody = document.getElementById('previewItemsBody');
+      tbody.innerHTML = validItems.map(item => `
+        <tr>
+          <td class="py-2 text-slate-500">${item.pno}</td>
+          <td class="py-2 font-medium text-slate-800">${item.pname}</td>
+          <td class="py-2 text-right text-slate-600">$${item.price.toLocaleString()}</td>
+          <td class="py-2 text-right text-slate-800 font-semibold">${item.qty}</td>
+          <td class="py-2 text-right text-slate-500">${item.unit}</td>
+          <td class="py-2 text-right font-medium text-slate-900">$${(item.price * item.qty).toLocaleString()}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('previewSubtotal').innerText = `NT$ ${subtotal.toLocaleString()}`;
+      document.getElementById('previewTax').innerText = `NT$ ${tax.toLocaleString()}`;
+      document.getElementById('previewTotal').innerText = `NT$ ${total.toLocaleString()}`;
+
+      document.getElementById('quoteModal').classList.remove('hidden');
+    }
+
+    function closeQuoteModal() {
+      document.getElementById('quoteModal').classList.add('hidden');
+    }
+
+    function getPdfFileName() {
+      const client = document.getElementById('clientName').value.trim() || '未指定客戶';
+      const date = document.getElementById('quoteDate').value || new Date().toISOString().split('T')[0];
+      return `報價單_${client}_${date}.pdf`;
+    }
+
+    // ==========================================
+    // 4. 下載 PDF (html2pdf)
+    // ==========================================
+    function downloadPDF() {
+      const element = document.getElementById('printArea');
+      const filename = getPdfFileName();
+
+      const opt = {
+        margin: 10,
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      html2pdf().set(opt).from(element).save();
+    }
+
+    // ==========================================
+    // 5. 分享至 LINE / Email (Web Share API)
+    // ==========================================
+    async function shareQuote() {
+      const client = document.getElementById('clientName').value.trim();
+      const date = document.getElementById('quoteDate').value;
+      const { total } = calculateTotals();
+      const filename = getPdfFileName();
+
+      // 組合文字摘要（適合傳送至 LINE 或 Email）
+      const validItems = items.filter(i => i.pno && i.qty > 0);
+      const itemsText = validItems.map(i => `• ${i.pname} x${i.qty} (${i.unit}) - $${(i.price * i.qty).toLocaleString()}`).join('\n');
+      const shareText = `【報價單】\n客戶：${client}\n日期：${date}\n\n品項：\n${itemsText}\n\n含稅總計：NT$ ${total.toLocaleString()}\n(請參閱附件或下載 PDF 檔案)`;
+
+      // 如果瀏覽器支援 Web Share API
+      if (navigator.share) {
+        try {
+          // 嘗試產出 PDF Blob 作為檔案分享
+          const element = document.getElementById('printArea');
+          const pdfBlob = await html2pdf().set({
+            margin: 10,
+            filename: filename,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+          }).from(element).output('blob');
+
+          const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
+          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            await navigator.share({
+              title: `報價單 - ${client}`,
+              text: shareText,
+              files: [pdfFile]
+            });
+            return;
+          } else {
+            // 不支援直接傳檔時，分享純文字摘要（能被 LINE / Email 正確轉發）
+            await navigator.share({
+              title: `報價單 - ${client}`,
+              text: shareText
+            });
+            return;
+          }
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            console.error('Share failed:', err);
+          }
+        }
+      }
+
+      // 若裝置/環境不支援 Web Share API，提供 LINE / Email 捷徑選單
+      fallbackShare(client, shareText);
+    }
+
+    function fallbackShare(client, shareText) {
+      const emailSubject = encodeURIComponent(`報價單 - ${client}`);
+      const emailBody = encodeURIComponent(shareText);
+      const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(shareText)}`;
+      const mailtoUrl = `mailto:?subject=${emailSubject}&body=${emailBody}`;
+
+      const choice = confirm("此瀏覽器不支援原生分享面板。\n\n點選「確定」轉跳至 LINE 分享，或點選「取消」使用 Email 寄送。");
+      if (choice) {
+        window.open(lineUrl, '_blank');
+      } else {
+        window.location.href = mailtoUrl;
+      }
+    }
+
+    // 初始化讀取試算表
+    loadProductsJSONP();
+  </script>
+</body>
+</html>
